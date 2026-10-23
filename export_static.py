@@ -32,6 +32,18 @@ def load_jar_map() -> dict:
     return {k.removeprefix("jar:"): v for k, v in rows}
 
 
+def load_blacklist_patterns() -> list:
+    bl = Path(__file__).parent / "blacklist.txt"
+    if not bl.exists():
+        print(f"WARN: blacklist file missing: {bl}", file=sys.stderr)
+        return []
+    pats = [re.compile(l, re.I) for l in bl.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.strip().startswith("#")]
+    if not pats:
+        print("WARN: blacklist is empty", file=sys.stderr)
+    return pats
+
+
 def main() -> int:
     raw = SRC.read_text(encoding="utf-8")
     jar_map = load_jar_map()
@@ -61,6 +73,15 @@ def main() -> int:
     cfg = json.loads(raw)
     pic = cfg.pop("pic", None)
 
+    # 成人内容过滤（规则见 blacklist.txt，与 iMac 聚合器共用同一份）
+    pats = load_blacklist_patterns()
+    is_blocked = lambda t: any(p.search(t) for p in pats)
+    sites_before = len(cfg.get("sites", []))
+    lives_before = len(cfg.get("lives", []))
+    blocked_sites = [s.get("name", "") for s in cfg.get("sites", []) if is_blocked(str(s.get("name", "")))]
+    cfg["sites"] = [s for s in cfg.get("sites", []) if not is_blocked(str(s.get("name", "")))]
+    cfg["lives"] = [g for g in cfg.get("lives", []) if not (isinstance(g, dict) and is_blocked(str(g.get("group", ""))))]
+
     residual = [
         u for u in re.findall(r"https?://[^\"\\s]+", raw)
         if JAR_PROXY_PATTERN.search(u) or "localhost" in u
@@ -69,6 +90,10 @@ def main() -> int:
 
     OUT.write_text(json.dumps(cfg, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"sites={len(cfg.get('sites', []))} lives={len(cfg.get('lives', []))}")
+    print(f"blacklist: sites {sites_before}->{len(cfg.get('sites', []))} (blocked {len(blocked_sites)})")
+    for n in blocked_sites:
+        print(f"  [blocked] {n[:70]}")
+    print(f"blacklist: lives {lives_before}->{len(cfg.get('lives', []))}")
     print(f"jar rewritten={replaced} unresolved={sorted(unresolved) if unresolved else 'none'}")
     print(f"pic removed={pic!r}")
     print(f"residual local urls={residual if residual else 'none'}")
