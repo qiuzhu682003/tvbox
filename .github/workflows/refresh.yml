@@ -65,7 +65,17 @@ jobs:
           echo "refreshing (may take several minutes)..."
           curl -sf --max-time 900 -X POST http://127.0.0.1:5678/refresh \
             -H "Authorization: Bearer $TOKEN"
-          curl -sf http://127.0.0.1:5678/ -o merged-config.json
+          ok=""
+          for i in 1 2 3 4 5 6; do
+            if curl -sf http://127.0.0.1:5678/ -o merged-config.json; then ok=1; break; fi
+            echo "GET / not ready (attempt $i), retrying in 10s..."
+            sleep 10
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::aggregation output unavailable after retries; server log tail:"
+            tail -60 aggregator/server.log
+            exit 1
+          fi
           python3 -c "import json; d=json.load(open('merged-config.json')); assert len(d.get('sites',[]))>100, 'too few sites'; print('sites:', len(d['sites']))"
 
       - name: Export static config
