@@ -63,6 +63,18 @@ import urllib.request
 # UA 与 TVBox / mpv 播放器生态一致，否则服务端放行策略与实际播放不一致
 UA = 'okhttp/3.12.0'
 
+# ── 域级黑名单（QZTV 起播选线同款认知）────────────────
+# 以下前缀在民用宽带上必然 403 / TCP 超时：
+#   cmvideo.cn / chinamobile / cmcc / unicom / telecom → 运营商 IPTV
+#   100.1.   → 移动运营商 CGNAT 地址段
+#   192.168. / 172.16. / 10. / 127.0.0.1 / localhost → 内网地址
+# 遇到这些前缀时直接判死，不计入探测成本，也不进入等待重试
+DEAD_DOMAINS = (
+    'cmvideo.cn', 'chinamobile', 'cmcc', 'unicom', 'telecom',
+    '100.1.', '192.168.', '172.16.', '10.',
+    '127.0.0.1', 'localhost',
+)
+
 CTX = ssl.create_default_context()
 CTX.check_hostname = False
 CTX.verify_mode = ssl.CERT_NONE
@@ -132,6 +144,8 @@ def probe(url: str, timeout: float = 6.0, deep: bool = True):
     deep=True 时对 .m3u8 会继续定位并下载真实分片 —— 这才能识别
     「索引活着但分片已死」的假流。
     """
+    if any(d in url for d in DEAD_DOMAINS):
+        return False, 'dead-domain'
     try:
         status, head = _get(url, timeout, 1024)
     except urllib.error.HTTPError as e:

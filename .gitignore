@@ -30,3 +30,10 @@ lives_test.json
 lives_filtered.json
 lives_r*.json
 e2e_run*.log
+
+# ── 电视端 m3u 服务（运行态产物，源码入库）──
+tvm3u/tv_source.m3u
+tvm3u/radio_cnr.m3u
+tvm3u.log
+tvm3u.err.log
+live-candidates/ccsh_live_lite.m3u
