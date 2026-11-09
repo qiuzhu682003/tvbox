@@ -136,6 +136,11 @@ def main():
             os.close(lock_fd)
         print(f"❌ 已有构建在跑（锁文件 {lock_path}），退出")
         return 1
+    except Exception as e:
+        if lock_fd is not None:
+            os.close(lock_fd)
+        print(f"❌ 无法加锁（{e}），退出")
+        return 1
 
     all_items = []
     for s in SOURCES:
@@ -220,4 +225,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main() or 0)
