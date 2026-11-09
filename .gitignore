@@ -17,3 +17,16 @@ ADMIN_TOKEN.txt
 tvbox.json
 live-candidates/
 backup_*.json
+
+# ── 探活产物（本地不入库，CI 里显式 git add 覆盖）──
+live_probe_report.json
+live_probe_state.json
+e2e_probe_report.json
+e2e_probe_state.json
+
+# 端到端测试产物
+tvbox_e2e.json
+lives_test.json
+lives_filtered.json
+lives_r*.json
+e2e_run*.log

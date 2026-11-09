@@ -135,7 +135,7 @@ python3 probe_live.py --url U --groups '央视频道,卫视频道' -o clean.m3u
   → 但注意：聚合器的 `channel_speed_map` 判的是**测速**不是**死活**，
     `channel_probe_status` 记录的是「speedMs」而非「alive/fail」，两者语义不同。
 
-### 路径 B（次优，产物层）：静态导出时过滤
+### 路径 B（次优，产物层）：静态导出时过滤 ✅ 已实现
 
 GitHub 静态聚合链路（`qiuzhu682003/tvbox`）每日 CI 跑一次并推送 `tvbox.json`，
 电视端填的就是这个地址。在**导出步骤**加一道探活过滤，产物就是干净的。
@@ -152,10 +152,61 @@ GitHub 静态聚合链路（`qiuzhu682003/tvbox`）每日 CI 跑一次并推送 
   OUT_JSON=~/tvbox/tvbox.json \
   python3 export_static.py
   ```
-- **要做的事**：加一步"对 `lives` 每个频道的每条 url 探活，全死则丢弃该频道"
-- 注意事项：CI runner 在海外，延迟与家庭网络不同；探活失败不能等同于"死链"，
-  建议**只丢弃连续失败 N 次的频道**，或把探活结果单独落一份 json 供本地复核
-- 影响面：电视端也会跟着变干净（与 Windows 端互不影响，两端各自独立刷新）
+
+#### ✅ 已实现（2026-11-09）：探活过滤器 `live_filter.py`
+
+新增独立模块 `~/tvbox/live_filter.py`，可被 `export_static.py` import，也可独立跑：
+
+```bash
+# 独立用法：对某份 TVBox 配置做探活过滤
+python3 ~/tvbox/live_filter.py \
+  --config ~/tvbox/tvbox.json \
+  --out ~/tvbox/live-candidates/filtered.json \
+  --report ~/tvbox/live-candidates/probe_report.json \
+  --state ~/tvbox/live-candidates/probe_state.json \
+  --whitelist ~/tvbox/known_good.txt \
+  --workers 16 --timeout 6 --max-lines 6 --threshold 3
+```
+
+**判活标准**（与 §1 一致，内容感知 + 探真实分片）：
+- HTTP 2xx + 内容含 `#EXTM3U` → HLS，继续探第一个真实分片
+- 分片 ≤1KB → 判死（假流/索引活分片死）
+- MP4（`ftyp`）、HTML（`<`）、`sign error` 等短文本 → 判死
+- TS 流（0x47 同步字节）→ 放行
+
+**分级过滤（避免误杀）**：连续失败 ≥ `--threshold`（默认 3）轮才丢弃该频道；
+单次网络抖动只记一次，不立即丢。探活成功即清零计数。
+白名单 `known_good.txt` 里的频道名**永不丢弃**（应对 CI 海外 vs 家庭内网差异）。
+
+**`export_static.py` 接入**（已加）：环境变量开启，CI 里已开：
+
+```yaml
+PROBE_LIVE: "1"                    # 开关
+PROBE_WORKERS: "24"                # 并发
+PROBE_TIMEOUT: "6"                 # 单条超时
+PROBE_MAX_LINES: "4"               # 每频道最多探几条线路
+PROBE_THRESHOLD: "3"               # 连续失败几次丢弃
+PROBE_REPORT: path/probe_report.json
+PROBE_STATE:  path/probe_state.json    # 失败计数持久化
+PROBE_WHITELIST: path/known_good.txt
+```
+
+探活失败时输出 `WARN: live probe failed, skipped`，**不阻断导出**——
+宁可多几个死链，也不能没有产物。
+
+**实测结果（79 频道 / 4 轮，2026-11-09）**：
+
+| 轮次 | 探活通过 | 待定（失败 <3 次） | 丢弃 | state 最大计数 |
+|---|---|---|---|---|
+| 1 | 44 | 35 | 0 | 1 |
+| 2 | 45 | 34 | 0 | 2 |
+| **3** | 45 | **0** | **34** | 3 ← 达阈值，剔除 |
+| 4 | 44 | 1 | 0 | 3 |
+
+最终 44/79（55.7%）真活，与 §7 手工深检 42 条基本吻合（差 2 条是否时序波动）。
+
+**CI 产物**：`live_probe_report.json` + `live_probe_state.json` 随 `tvbox.json` 一起提交，
+本地可复核（CI 海外网络与家庭网络不同，报告里的死链不一定是家里也死）。
 
 ### 路径 C（兜底，本地）：一次性筛出快照源
 

@@ -18,6 +18,16 @@ SRC = Path(os.environ.get("SRC_JSON", AGG_DIR / "merged-config.json"))
 DB = Path(os.environ.get("AGG_DB", AGG_DIR / "data" / "tvbox.db"))
 OUT = Path(os.environ.get("OUT_JSON", Path(__file__).parent / "tvbox.json"))
 
+# ── 直播源探活过滤（可选，用 PROBE_LIVE=1 开启）────────────
+PROBE_LIVE = os.environ.get("PROBE_LIVE", "").strip() not in ("", "0", "false", "False")
+PROBE_REPORT = Path(os.environ.get("PROBE_REPORT", str(Path(__file__).parent / "live_probe_report.json")))
+PROBE_STATE = Path(os.environ.get("PROBE_STATE", str(Path(__file__).parent / "live_probe_state.json")))
+PROBE_WHITELIST = Path(os.environ.get("PROBE_WHITELIST", str(Path(__file__).parent / "known_good.txt")))
+PROBE_WORKERS = int(os.environ.get("PROBE_WORKERS", "16"))
+PROBE_TIMEOUT = float(os.environ.get("PROBE_TIMEOUT", "6"))
+PROBE_MAX_LINES = int(os.environ.get("PROBE_MAX_LINES", "6"))
+PROBE_THRESHOLD = int(os.environ.get("PROBE_THRESHOLD", "3"))
+
 # 聚合器把 JAR 收编为 "<base>/jar/<key>" 代理地址；key 为 16 位 urlToKey 或 32 位 md5。
 # 静态化时按映射还原，host 部分不限（本机导出为局域网 IP，CI 里为 127.0.0.1）。
 JAR_PROXY_PATTERN = re.compile(
@@ -81,6 +91,29 @@ def main() -> int:
     blocked_sites = [s.get("name", "") for s in cfg.get("sites", []) if is_blocked(str(s.get("name", "")))]
     cfg["sites"] = [s for s in cfg.get("sites", []) if not is_blocked(str(s.get("name", "")))]
     cfg["lives"] = [g for g in cfg.get("lives", []) if not (isinstance(g, dict) and is_blocked(str(g.get("group", ""))))]
+
+    # ── 直播源探活过滤 ──────────────────────────────────────
+    # 只保留实测可用的频道；连续失败 N 次才丢弃（避免单次网络抖动误杀）。
+    if PROBE_LIVE:
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from live_filter import filter_lives
+            stats = filter_lives(
+                cfg,
+                workers=PROBE_WORKERS, timeout=PROBE_TIMEOUT,
+                max_lines=PROBE_MAX_LINES, threshold=PROBE_THRESHOLD,
+                state_path=str(PROBE_STATE),
+                whitelist_path=str(PROBE_WHITELIST),
+                report_path=str(PROBE_REPORT),
+            )
+            print(f"live probe: channels {stats['total']} alive {stats['alive']} "
+                  f"pending {stats['kept_pending']} dropped {stats['dropped']} "
+                  f"({stats['duration_s']}s)")
+            for d in stats['dead'][:20]:
+                print(f"  [dropped] {d['name'][:60]} (fail#{d['fails']})")
+        except Exception as e:
+            # 探活失败不能阻断导出 —— 宁可多几个死链，也不能没有产物
+            print(f"WARN: live probe failed, skipped: {e}", file=sys.stderr)
 
     residual = [
         u for u in re.findall(r"https?://[^\"\\s]+", raw)
