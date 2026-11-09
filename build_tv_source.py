@@ -124,6 +124,19 @@ def main():
     ap.add_argument('--report', default='')
     args = ap.parse_args()
 
+    # 文件锁：防止多个构建并发跑互相覆盖产物
+    lock_path = os.path.abspath(args.out) + ".lock"
+    lock_fd = None
+    try:
+        import fcntl
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (ImportError, BlockingIOError):
+        if lock_fd is not None:
+            os.close(lock_fd)
+        print(f"❌ 已有构建在跑（锁文件 {lock_path}），退出")
+        return 1
+
     all_items = []
     for s in SOURCES:
         print(f"拉取 {s['name']} …", flush=True)
@@ -183,8 +196,11 @@ def main():
         lines.extend(info['urls'])
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or '.', exist_ok=True)
-    with open(args.out, 'w', encoding='utf-8') as f:
+    # 原子写：先写 .tmp 再 rename，避免读方看到半截文件
+    tmp_path = args.out + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
+    os.replace(tmp_path, args.out)
     print(f"written: {args.out}  ({os.path.getsize(args.out):,} B, {len(chan)} 频道)")
 
     if args.report:

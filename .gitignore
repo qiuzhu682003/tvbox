@@ -37,3 +37,7 @@ tvm3u/radio_cnr.m3u
 tvm3u.log
 tvm3u.err.log
 live-candidates/ccsh_live_lite.m3u
+
+# 构建锁 / 临时文件
+live-candidates/*.lock
+live-candidates/*.tmp
