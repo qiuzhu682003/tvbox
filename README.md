@@ -66,9 +66,3 @@ python3 probe_live.py --url 'https://.../live_lite.m3u'     --epg 'https://.../e
 
 > 判活**不能只看 HTTP 状态码**：实测有线路返回 `HTTP 200 + sign error`（鉴权失败），
 > 会被误判为可用线，播放时报 `Failed to recognize file format`。必须同时校验内容。
-
-直播源不依赖本配置，电视端单独填（已实测可用）：
-
-- 点播+直播二合一：上方 tvbox.json（内含聚合的 1915 个直播分组）
-- 纯直播推荐：`https://gh-proxy.com/raw.githubusercontent.com/vbskycn/iptv/refs/heads/master/tv/iptv4.m3u`（每 6h 更新）
-- EPG：`https://gh-proxy.com/raw.githubusercontent.com/CCSH/IPTV/refs/heads/main/e.xml`
