@@ -1,3 +1,19 @@
-node_modules/
-data/
-__pycache__/
+# ── 依赖 / 构建产物 ─────────────────────────────
+**/node_modules/
+**/dist/
+**/__pycache__/
+**/*.pyc
+**/data/
+aggregator/server.log
+aggregator/access.log
+*.log
+
+# ── 敏感：绝不进版本库 ─────────────────────────
+**/.env
+**/.env.bak.*
+ADMIN_TOKEN.txt
+
+# ── 本地产物（远端由 CI 生成）──────────────────
+tvbox.json
+live-candidates/
+backup_*.json
