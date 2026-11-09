@@ -84,14 +84,29 @@ jobs:
           SRC_JSON: ${{ github.workspace }}/merged-config.json
           AGG_DB: ${{ github.workspace }}/aggregator/data/tvbox.db
           OUT_JSON: ${{ github.workspace }}/tvbox.json
+          # ── 直播源探活过滤 ──────────────────────────────
+          # 分级过滤：连续失败 PROBE_THRESHOLD 次才丢弃该频道，
+          # 避免 CI runner 在海外、单次网络抖动导致误杀。
+          PROBE_LIVE: "1"
+          PROBE_REPORT: ${{ github.workspace }}/live_probe_report.json
+          PROBE_STATE: ${{ github.workspace }}/live_probe_state.json
+          PROBE_WHITELIST: ${{ github.workspace }}/known_good.txt
+          PROBE_WORKERS: "24"
+          PROBE_TIMEOUT: "6"
+          PROBE_MAX_LINES: "4"
+          PROBE_THRESHOLD: "3"
         run: |
           python3 export_static.py
+          # 探活报告随产物一起提交，本地可复核（CI 海外网络与家庭网络不同）
+          if [ -f live_probe_report.json ]; then
+            python3 -c "import json,sys; d=json.load(open('live_probe_report.json')); print('probe report: alive', d['alive'], 'pending', d['kept_pending'], 'dropped', d['dropped'])"
+          fi
 
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tvbox.json
+          git add tvbox.json live_probe_report.json live_probe_state.json 2>/dev/null || git add tvbox.json
           if git diff --cached --quiet; then
             echo "no changes to tvbox.json"
           else
