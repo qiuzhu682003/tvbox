@@ -66,5 +66,7 @@ python3 probe_live.py --url 'https://.../live_lite.m3u'     --epg 'https://.../e
 
 实测：ccsh_lite（474 频道 / 3408 线路）→ 约 50% 频道可用，探活约 70–110 秒。
 
+上游「live」系的繁体分组名（綜合/新聞/電影/綜藝/兒童/音樂，来自台湾源 Kimentanm）已在导出时统一转简体（export_static.py 内置映射，零依赖）。
+
 > 判活**不能只看 HTTP 状态码**：实测有线路返回 `HTTP 200 + sign error`（鉴权失败），
 > 会被误判为可用线，播放时报 `Failed to recognize file format`。必须同时校验内容。
