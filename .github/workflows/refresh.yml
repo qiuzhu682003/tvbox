@@ -15,7 +15,7 @@ concurrency:
 jobs:
   aggregate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -91,7 +91,7 @@ jobs:
           PROBE_REPORT: ${{ github.workspace }}/live_probe_report.json
           PROBE_STATE: ${{ github.workspace }}/live_probe_state.json
           PROBE_WHITELIST: ${{ github.workspace }}/known_good.txt
-          PROBE_WORKERS: "24"
+          PROBE_WORKERS: "96"
           PROBE_TIMEOUT: "6"
           PROBE_MAX_LINES: "4"
           PROBE_THRESHOLD: "3"
