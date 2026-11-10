@@ -56,6 +56,8 @@ git add tvbox.json && git commit -m refresh && git push
 - **方法文档**：[LIVE_SOURCE_OPTIMIZATION.md](LIVE_SOURCE_OPTIMIZATION.md)
   含内容感知的判活标准、三条落地路径（聚合器 channel-probe / 静态导出过滤 / 本地快照源）、已知坑与验收标准。
 - **工具**：[probe_live.py](probe_live.py)
+- **源清单快照**：[QZTV_SOURCE_INVENTORY.md](QZTV_SOURCE_INVENTORY.md)
+  QZTV（Windows 定制版）当前点播/直播源的完整盘点：229 点播站、3 直播源 1664 频道、跨源合并与自动换线机制。
   纯 Python3 标准库，无依赖。拉源→逐条探活→只输出实测可用的频道。
 
 ```bash
