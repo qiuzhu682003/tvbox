@@ -92,6 +92,27 @@ def main() -> int:
     cfg["sites"] = [s for s in cfg.get("sites", []) if not is_blocked(str(s.get("name", "")))]
     cfg["lives"] = [g for g in cfg.get("lives", []) if not (isinstance(g, dict) and is_blocked(str(g.get("group", ""))))]
 
+    # ── 直播分组名繁体→简体 ────────────────────────────────────
+    # 上游部分源（如 Kimentanm，台湾）的分组名是繁体（「live」綜合/新聞/電影…）。
+    # 电视端与 Windows 端的分组列表按名字展示/合并，混用繁体会显得杂乱。
+    # 只覆盖实际出现的字符，零依赖（不引入 opencc）。
+    TRAD_TO_SIMP = str.maketrans({
+        "綜": "综", "藝": "艺", "聞": "闻", "電": "电", "兒": "儿",
+        "樂": "乐", "紀": "纪", "錄": "录", "頻": "频", "體": "体",
+        "戲": "戏", "劇": "剧", "歷": "历", "賽": "赛", "衛": "卫",
+        "廣": "广", "東": "东", "遼": "辽", "寧": "宁", "龍": "龙",
+        "鳳": "凤", "凰": "凰", "鳴": "鸣", "臺": "台",
+    })
+
+    def _simplify_group(g):
+        if isinstance(g, dict) and isinstance(g.get("group", ""), str):
+            fixed = g["group"].translate(TRAD_TO_SIMP)
+            if fixed != g["group"]:
+                g["group"] = fixed
+        return g
+
+    cfg["lives"] = [_simplify_group(g) for g in cfg["lives"]]
+
     # ── 直播源探活过滤 ──────────────────────────────────────
     # 只保留实测可用的频道；连续失败 N 次才丢弃（避免单次网络抖动误杀）。
     if PROBE_LIVE:
