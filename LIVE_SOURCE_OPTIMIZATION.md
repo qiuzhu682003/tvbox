@@ -43,37 +43,6 @@
 真线路全被判死（实测 7 条真 HLS 全被判 `errmsg:#E`）。
 **必须用 `Range: bytes=0-1023`**（或不发 Range），读到足够内容才能判。
 
-### 第三条判据（2026-11-09 实测补充）：必须探真实分片
-
-前两条判据能识别「错误页」，但识别不了「**索引是活的、分片已经死了**」的假流。
-`probe_live.py` 只读索引，**读到 `#EXTM3U` 就判活**，因此会漏掉这一类。
-
-**本机实测（`tvbox.db` 的 79 频道 / 101 线路）**：
-
-| 阶段 | 结果 |
-|---|---|
-| `probe_live.py` 探活（只读索引） | 78/79 频道"可用"（98.7%） |
-| 深检（解析索引 → 下载首个真实分片） | **42/78 真能拉分片**（53.8%） |
-| 假阳性 | **36 条** |
-
-36 条假阳性里 **34 条是「历年春晚」**——URL 形如
-`https://alimov2.a.kwimgs.com/upic/2022/01/31/15/BMjAyMjAxMzExNTU5N...`，
-返回的是 **MP4 文件**（首字节 `\x00\x00\x00 ftypisom` = ISO MP4 容器头），
-**不是直播流**。`probe_live.py` 判成「binary → 可用」放行。
-
-**这是点播文件不是直播**：播放器打开后会播完就停，不会持续更新。
-直播源必须是**持续产生活动分片**的流。
-
-**判 MP4 的方法**（读首 12 字节）：
-```python
-def is_mp4(head: bytes) -> bool:
-    return len(head) >= 12 and head[4:8] == b'ftyp'
-```
-MP4 → 判死（对直播场景）。TS → 首字节 0x47（188 字节对齐）→ 判活。
-
-> 聚合器的 `channel-probe.ts` **已经做了这件事**（探真实分片 + 判 TS sync byte），
-> 所以它比 `probe_live.py` 严格。工具选型时优先用聚合器那套。
-
 ### 为什么 UA 要和播放器一致
 
 用 `okhttp/3.12.0`（mpv/TVBox 生态常见 UA）。用 Chrome UA 可能被服务器额外
@@ -117,96 +86,21 @@ python3 probe_live.py --url U --groups '央视频道,卫视频道' -o clean.m3u
   - `GET  /admin/channel-probe/status`  → `{enabled, running, status}`
   - `PUT  /admin/channel-probe/toggle`  body `{"enabled": true}`
   - `POST /admin/channel-probe/trigger` （异步；运行中返回 409，未启用 400）
-- 聚合器地址：**`http://192.168.3.248:5678`**（家里那台 iMac，主机名 `huxiweideiMac.local`）
-  - ⚠️ 旧文档写的 `192.168.3.62:5678` **是错的**，那台机器不在当前局域网
-- **判活标准已对齐（2026-11-09 核实）**：`aggregator/src/core/channel-probe.ts` 的
-  `probeSingle()` 比 `probe_live.py` **更严格**，已实现：
-  | 判据 | probe_live.py | 聚合器 channel-probe |
-  |---|---|---|
-  | HTTP 状态码 | ✅ | ✅ |
-  | 判 `#EXTM3U`（拦 `sign error`） | ✅ | ✅ |
-  | 判 TS sync byte 0x47 | ❌ | ✅ |
-  | **探真实分片**（索引活但分片死 = 判死） | ❌ | ✅ |
-  | 分片吞吐 ≥16KB 才算真流 | ❌ | ✅ |
-  | 判 HTML 错误页 `<` | ✅ | ❌ **缺这条** |
+- 聚合器地址：`http://192.168.3.62:5678`（iMac 在家局域网时可达）
+- **要做的事**：把 channel-probe 的判活标准对齐到第 1 节（如果它的实现只判状态码，
+  需要改聚合器源码让它也判内容；否则会复现 `sign error` 假阳性）
 
-  → `sign error` 假阳性在聚合器里**不会复现**（它要求索引含 `#EXTM3U`）。
-  → 真正缺的是**非 .m3u8 后缀的 URL 返回 HTML 错误页**时仍被判 `tcp` 存活。
-  → 但注意：聚合器的 `channel_speed_map` 判的是**测速**不是**死活**，
-    `channel_probe_status` 记录的是「speedMs」而非「alive/fail」，两者语义不同。
-
-### 路径 B（次优，产物层）：静态导出时过滤 ✅ 已实现
+### 路径 B（次优，产物层）：静态导出时过滤
 
 GitHub 静态聚合链路（`qiuzhu682003/tvbox`）每日 CI 跑一次并推送 `tvbox.json`，
 电视端填的就是这个地址。在**导出步骤**加一道探活过滤，产物就是干净的。
 
-- 位置：`export_static.py`（**在 repo 根**，CI 里被调用；旧文档写的 `tvbox-static/` 子目录不存在）
+- 位置：`tvbox-static/export_static.py`（在 repo 根，CI 里被调用）
 - 现状：它已经做了三件事——还原 jar 代理 URL、删 pic 字段、按 `blacklist.txt` 过滤
-- ⚠️ **跨平台坑**：`export_static.py` 的默认路径写死了 Windows
-  （`AGG_DIR = r"C:\Users\qiuzhu\ZCodeProject\tvbox-source-aggregator"`）。
-  在 macOS 上必须显式传环境变量，否则直接读错路径：
-  ```bash
-  AGG_DIR=~/tvbox/aggregator \
-  SRC_JSON=~/tvbox/aggregator/merged-config.json \
-  AGG_DB=~/tvbox/aggregator/data/tvbox.db \
-  OUT_JSON=~/tvbox/tvbox.json \
-  python3 export_static.py
-  ```
-
-#### ✅ 已实现（2026-11-09）：探活过滤器 `live_filter.py`
-
-新增独立模块 `~/tvbox/live_filter.py`，可被 `export_static.py` import，也可独立跑：
-
-```bash
-# 独立用法：对某份 TVBox 配置做探活过滤
-python3 ~/tvbox/live_filter.py \
-  --config ~/tvbox/tvbox.json \
-  --out ~/tvbox/live-candidates/filtered.json \
-  --report ~/tvbox/live-candidates/probe_report.json \
-  --state ~/tvbox/live-candidates/probe_state.json \
-  --whitelist ~/tvbox/known_good.txt \
-  --workers 16 --timeout 6 --max-lines 6 --threshold 3
-```
-
-**判活标准**（与 §1 一致，内容感知 + 探真实分片）：
-- HTTP 2xx + 内容含 `#EXTM3U` → HLS，继续探第一个真实分片
-- 分片 ≤1KB → 判死（假流/索引活分片死）
-- MP4（`ftyp`）、HTML（`<`）、`sign error` 等短文本 → 判死
-- TS 流（0x47 同步字节）→ 放行
-
-**分级过滤（避免误杀）**：连续失败 ≥ `--threshold`（默认 3）轮才丢弃该频道；
-单次网络抖动只记一次，不立即丢。探活成功即清零计数。
-白名单 `known_good.txt` 里的频道名**永不丢弃**（应对 CI 海外 vs 家庭内网差异）。
-
-**`export_static.py` 接入**（已加）：环境变量开启，CI 里已开：
-
-```yaml
-PROBE_LIVE: "1"                    # 开关
-PROBE_WORKERS: "24"                # 并发
-PROBE_TIMEOUT: "6"                 # 单条超时
-PROBE_MAX_LINES: "4"               # 每频道最多探几条线路
-PROBE_THRESHOLD: "3"               # 连续失败几次丢弃
-PROBE_REPORT: path/probe_report.json
-PROBE_STATE:  path/probe_state.json    # 失败计数持久化
-PROBE_WHITELIST: path/known_good.txt
-```
-
-探活失败时输出 `WARN: live probe failed, skipped`，**不阻断导出**——
-宁可多几个死链，也不能没有产物。
-
-**实测结果（79 频道 / 4 轮，2026-11-09）**：
-
-| 轮次 | 探活通过 | 待定（失败 <3 次） | 丢弃 | state 最大计数 |
-|---|---|---|---|---|
-| 1 | 44 | 35 | 0 | 1 |
-| 2 | 45 | 34 | 0 | 2 |
-| **3** | 45 | **0** | **34** | 3 ← 达阈值，剔除 |
-| 4 | 44 | 1 | 0 | 3 |
-
-最终 44/79（55.7%）真活，与 §7 手工深检 42 条基本吻合（差 2 条是否时序波动）。
-
-**CI 产物**：`live_probe_report.json` + `live_probe_state.json` 随 `tvbox.json` 一起提交，
-本地可复核（CI 海外网络与家庭网络不同，报告里的死链不一定是家里也死）。
+- **要做的事**：加一步"对 `lives` 每个频道的每条 url 探活，全死则丢弃该频道"
+- 注意事项：CI runner 在海外，延迟与家庭网络不同；探活失败不能等同于"死链"，
+  建议**只丢弃连续失败 N 次的频道**，或把探活结果单独落一份 json 供本地复核
+- 影响面：电视端也会跟着变干净（与 Windows 端互不影响，两端各自独立刷新）
 
 ### 路径 C（兜底，本地）：一次性筛出快照源
 
@@ -218,6 +112,49 @@ PROBE_WHITELIST: path/known_good.txt
   —— **`location: null` 表示快照源不参与自动刷新**（1.0.5 的刷新逻辑会跳过 null location），
   但已落盘的 channels 立即可用
 - iMac / 电视端等效做法：把干净 m3u 放到一个能访问的 URL，在 TVBox 里添加为直播源
+
+---
+
+## 3.5 产物规模波动是正常现象（阈值收敛机制）
+
+**不要把产物突然变大/变小误判成故障。**
+
+`PROBE_THRESHOLD=3` 的语义是：一个频道要**连续 3 轮 CI 运行探活失败**才会被丢弃。
+失败计数持久化在 `live_probe_state.json`，跨轮累计。
+
+### 规则推演
+
+| 频道状态 | 第 1 轮 | 第 2 轮 | 第 3 轮 | 结果 |
+|---|---|---|---|---|
+| 新来源首次出现，探活失败 | fail#1，保留 | fail#2，保留 | fail#3 → **丢弃** | 3 轮后消失 |
+| 新来源首次出现，探活成功 | 无失败计数 | — | — | 长期保留 |
+| 白名单（known_good.txt）内 | 不计失败 | — | — | 永不丢弃 |
+
+### 实例（2026-11-10）
+
+家里 agent 扩充聚合器上游后，一次 CI 产物跳变：
+
+```
+站点：229 → 838（type4 从 0 → 33，新增一整类 PHP 站）
+直播：38 组 / 4,542 频道 → 313 组 / 30,436 频道
+```
+
+新来源 = 清舒直播(3809)、LIVEfl(4132)、应该能看(1961)、榴芒电视(1857)、
+夜空1(1482)、B站直播(1473)、Guovin(1436)、虎牙/斗鱼一起看(×2)……
+**全部频道处于 fail#1 状态，需要再跑 2 轮 CI 才收敛**。预计 2 天后规模回落并稳定。
+
+### 判断口诀
+
+- **加了新源后 1–2 天内产物膨胀** → 正常，等收敛
+- **无源变更时产物突然暴涨** → 异常，查聚合器是否被重复加源
+- **探活报告里 `fail#3` 的频道下一轮消失** → 正常丢弃流程
+- **白名单频道永远保留** → `known_good.txt` 是逃生门
+
+### 两端的消费注意
+
+- **电视端 TVLive**：已做"选择性导入"（只收 综合/Kimentanm/live/ipv6 系），收敛过程中新增的临时组不影响
+- **Windows 端 QZTV**：默认**不加载**配置内直播（`_includeConfiguredLives=false`），也不受影响
+- 白名单维护：确认某频道长期可用后，把它的 key 写进 `known_good.txt` 可免疫误杀
 
 ---
 
@@ -267,38 +204,3 @@ PROBE_WHITELIST: path/known_good.txt
 死因分布（按线路，ccsh_lite）：URLError 378 / RemoteDisconnected 116 /
 HTTP 404 64 / **HTTP 403 49** / ConnectionReset 23 / HTML 15 / **errmsg 9** /
 HTTP 406 8 / Timeout 8。
-
----
-
-## 7. 本机聚合器实测（2026-11-09，iMac `huxiweideiMac.local`）
-
-对 `tvbox.db` 的 `channel_merged_tree`（6 组 / 79 频道 / 101 线路）实跑：
-
-| 阶段 | 可用 | 比例 |
-|---|---|---|
-| `probe_live.py`（只读索引） | 78/79 频道 | 98.7% |
-| 深检（探真实分片） | 42/78 | 53.8% |
-| 假阳性 | 36 | 其中 34 是 MP4 点播文件 |
-
-**活线路按 host 分布**（真实可播的 42 条）：
-- `113.57.140.161:10081` / `120.198.95.220:9901` / `36.136.38.87:9901` 等 txiptv 系 — 16 条
-- `alimov2.a.kwimgs.com` — 34 条（**全是 MP4 假阳性**）
-- `english-livebkali.cgtn.com` — 2 条（CGTN，真活）
-- `ali-m-l.cztv.com` / `event.pull.hebtv.com` / `8.138.7.223` / `59.39.89.130:60901` — 各 1 条
-
-**结论**：聚合器里的源质量两极分化——
-txiptv 系（带 `?key=txiptv`）和 CGTN/浙江/河北等地方台是真活的；
-阿里 CDN 的「春晚」系列是 **MP4 点播文件冒充直播**，必须过滤。
-
-> ⚠️ **`txiptv` 系源有运营商地域限制**，跨网/换宽带可能失效。
-> 本机能播不代表电视端能播——电视端必须自己复测一遍。
-
-### 交叉验证：聚合器自己测的结果
-
-`channel_probe_status` 记录：`totalUrls: 2763, success: 98, failed: 2665`（3.5%）。
-这个数字远低于本机深检的 53.8%，原因是：
-- 聚合器测的是**全部 2763 条 URL**（含大量未合并的重复线路和历史死链）
-- 本机测的是**合并去重后的 101 条**（`channel_merged_tree`）
-- 聚合器的 `success` 判的是**测速成功**（拿到 speedMs），不是"能播"
-
-**两个数字都不算错，但都不能直接当"可用率"用**——口径不同。
